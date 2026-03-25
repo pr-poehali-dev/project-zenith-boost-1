@@ -1,811 +1,389 @@
-import { useEffect, useRef, useState } from "react"
-import { Button } from "@/components/ui/button"
-import { PawPrint, Trees, Satellite, Menu, X, Youtube, Instagram, ChevronDown } from "lucide-react"
-import { AnimatedText } from "@/components/animated-text"
-import { CustomDroneIcon } from "@/components/drone-icon"
-import { WorldMap } from "@/components/world-map"
-import { experiences } from "@/lib/experience-data"
-import type { Experience } from "@/lib/experience-data"
+import { useState, useRef } from "react"
+import { TreeMap, type TreeMarker } from "@/components/tree-map"
+import { TreeForm } from "@/components/tree-form"
+import Icon from "@/components/ui/icon"
 
-function AnimatedCounter({ value, suffix = "" }: { value: string; suffix?: string }) {
-  const [displayValue, setDisplayValue] = useState("0")
-  const ref = useRef<HTMLDivElement>(null)
+type PanelMode = "list" | "add" | "edit" | "view"
 
-  useEffect(() => {
-    const observer = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          const numericStr = value.replace(/[^0-9.]/g, "")
-          const targetNum = Number.parseFloat(numericStr)
-          const unit = value.replace(/[0-9.]/g, "")
+function parseKML(text: string): Partial<TreeMarker>[] {
+  const parser = new DOMParser()
+  const doc = parser.parseFromString(text, "application/xml")
+  const placemarks = doc.querySelectorAll("Placemark")
+  const results: Partial<TreeMarker>[] = []
 
-          let current = 0
-          const increment = targetNum / 60
-          const interval = setInterval(() => {
-            current += increment
-            if (current >= targetNum) {
-              setDisplayValue(`${targetNum}${unit}`)
-              clearInterval(interval)
-            } else {
-              setDisplayValue(`${current.toFixed(1)}${unit}`.replace(".0", ""))
-            }
-          }, 16)
+  placemarks.forEach((pm) => {
+    const coordEl = pm.querySelector("coordinates")
+    if (!coordEl) return
+    const [lng, lat] = coordEl.textContent?.trim().split(",").map(Number) ?? []
+    if (isNaN(lat) || isNaN(lng)) return
 
-          observer.disconnect()
-        }
-      },
-      { threshold: 0.5 },
-    )
+    const name = pm.querySelector("name")?.textContent ?? "Дерево"
+    results.push({ lat, lng, name })
+  })
 
-    if (ref.current) observer.observe(ref.current)
-    return () => observer.disconnect()
-  }, [value])
-
-  return (
-    <div className="text-8xl" ref={ref}>
-      {displayValue}
-    </div>
-  )
+  return results
 }
 
-export default function VerdantPage() {
-  const [isLoaded, setIsLoaded] = useState(false)
-  const [isMenuOpen, setIsMenuOpen] = useState(false)
-  const [scrollY, setScrollY] = useState(0)
-  const [selectedFeature, setSelectedFeature] = useState(0)
-  const [imageFade, setImageFade] = useState(true)
-  const [autoRotationKey, setAutoRotationKey] = useState(0)
-  const [dynamicWordIndex, setDynamicWordIndex] = useState(0)
-  const [wordFade, setWordFade] = useState(true)
-  const [dashboardScrollOffset, setDashboardScrollOffset] = useState(0)
-  const [selectedExperience, setSelectedExperience] = useState<Experience | null>(null)
-  const [openFaqIndex, setOpenFaqIndex] = useState<number | null>(null)
-  const dashboardRef = useRef<HTMLDivElement>(null)
-  const heroRef = useRef<HTMLDivElement>(null)
-  const observerRef = useRef<IntersectionObserver | null>(null)
-
-  const dynamicWords = ["леса", "природу", "животных", "экосистемы", "биоразнообразие", "дикую жизнь", "среду обитания"]
-
-  useEffect(() => {
-    const wordInterval = setInterval(() => {
-      setWordFade(false)
-      setTimeout(() => {
-        setDynamicWordIndex((prev) => (prev + 1) % dynamicWords.length)
-        setWordFade(true)
-      }, 300)
-    }, 3000)
-
-    return () => clearInterval(wordInterval)
-  }, [])
-
-  useEffect(() => {
-    const handleScroll = () => {
-      setScrollY(window.scrollY)
-
-      if (dashboardRef.current) {
-        const dashboardRect = dashboardRef.current.getBoundingClientRect()
-        const viewportHeight = window.innerHeight
-
-        const rotationStart = viewportHeight * 0.8
-        const rotationEnd = viewportHeight * 0.2
-
-        if (dashboardRect.top >= rotationStart) {
-          setDashboardScrollOffset(0)
-        } else if (dashboardRect.top <= rotationEnd) {
-          setDashboardScrollOffset(15)
-        } else {
-          const scrollRange = rotationStart - rotationEnd
-          const currentProgress = rotationStart - dashboardRect.top
-          const rotationProgress = currentProgress / scrollRange
-          const tiltAngle = rotationProgress * 15
-          setDashboardScrollOffset(tiltAngle)
-        }
-      }
-    }
-
-    handleScroll()
-    window.addEventListener("scroll", handleScroll)
-    return () => window.removeEventListener("scroll", handleScroll)
-  }, [])
-
-  useEffect(() => {
-    setIsLoaded(true)
-
-    observerRef.current = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add("animate-in")
-          }
-        })
-      },
-      { threshold: 0.1, rootMargin: "0px 0px -50px 0px" },
+function exportKML(markers: TreeMarker[]): string {
+  const placemarks = markers
+    .map(
+      (m) => `
+  <Placemark>
+    <name>${m.name}</name>
+    <description>
+      Порода: ${m.species}
+      Диаметр: ${m.diameter} см
+      Высота: ${m.height} м
+      Количество: ${m.count}
+      Примечание: ${m.note ?? ""}
+    </description>
+    <Point><coordinates>${m.lng},${m.lat},0</coordinates></Point>
+  </Placemark>`
     )
+    .join("")
 
-    const elements = document.querySelectorAll(".animate-on-scroll")
-    elements.forEach((el) => observerRef.current?.observe(el))
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Ведомость деревьев</name>${placemarks}
+  </Document>
+</kml>`
+}
 
-    return () => observerRef.current?.disconnect()
-  }, [])
+export default function TreeRegisterPage() {
+  const [markers, setMarkers] = useState<TreeMarker[]>([])
+  const [panelMode, setPanelMode] = useState<PanelMode>("list")
+  const [selectedMarker, setSelectedMarker] = useState<TreeMarker | null>(null)
+  const [pendingCoords, setPendingCoords] = useState<{ lat: number; lng: number } | null>(null)
+  const [search, setSearch] = useState("")
+  const [isLoaded, setIsLoaded] = useState(true)
+  const kmlInputRef = useRef<HTMLInputElement>(null)
 
-  useEffect(() => {
-    const featuresCount = 4
+  const filteredMarkers = markers.filter(
+    (m) =>
+      m.name.toLowerCase().includes(search.toLowerCase()) ||
+      m.species.toLowerCase().includes(search.toLowerCase())
+  )
 
-    const interval = setInterval(() => {
-      setImageFade(false)
-      setTimeout(() => {
-        setSelectedFeature((prev) => (prev + 1) % featuresCount)
-        setImageFade(true)
-      }, 300)
-    }, 6000)
+  const totalTrees = markers.reduce((sum, m) => sum + m.count, 0)
 
-    return () => clearInterval(interval)
-  }, [autoRotationKey])
+  const handleAddMarker = (lat: number, lng: number) => {
+    setPendingCoords({ lat, lng })
+    setPanelMode("add")
+  }
 
-  const scrollToSection = (id: string) => {
-    const element = document.getElementById(id)
-    if (element) {
-      element.scrollIntoView({ behavior: "smooth" })
+  const handleSaveNew = (data: Omit<TreeMarker, "id" | "lat" | "lng">) => {
+    if (!pendingCoords) return
+    const newMarker: TreeMarker = {
+      id: crypto.randomUUID(),
+      ...pendingCoords,
+      ...data,
     }
-    setIsMenuOpen(false)
+    setMarkers((prev) => [...prev, newMarker])
+    setPendingCoords(null)
+    setPanelMode("list")
+  }
+
+  const handleSaveEdit = (data: Omit<TreeMarker, "id" | "lat" | "lng">) => {
+    if (!selectedMarker) return
+    setMarkers((prev) =>
+      prev.map((m) => (m.id === selectedMarker.id ? { ...m, ...data } : m))
+    )
+    setSelectedMarker(null)
+    setPanelMode("list")
+  }
+
+  const handleDelete = () => {
+    if (!selectedMarker) return
+    setMarkers((prev) => prev.filter((m) => m.id !== selectedMarker.id))
+    setSelectedMarker(null)
+    setPanelMode("list")
+  }
+
+  const handleSelectMarker = (marker: TreeMarker) => {
+    setSelectedMarker(marker)
+    setPanelMode("view")
+  }
+
+  const handleKMLImport = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const text = ev.target?.result as string
+      const parsed = parseKML(text)
+      const newMarkers: TreeMarker[] = parsed.map((p) => ({
+        id: crypto.randomUUID(),
+        lat: p.lat!,
+        lng: p.lng!,
+        name: p.name ?? "Дерево",
+        species: "",
+        diameter: 0,
+        count: 1,
+        height: 0,
+      }))
+      setMarkers((prev) => [...prev, ...newMarkers])
+    }
+    reader.readAsText(file)
+    e.target.value = ""
+  }
+
+  const handleKMLExport = () => {
+    const kml = exportKML(markers)
+    const blob = new Blob([kml], { type: "application/vnd.google-earth.kml+xml" })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement("a")
+    a.href = url
+    a.download = "деревья.kml"
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   return (
-    <div className="relative min-h-screen bg-[#0B0C0F] text-[#F2F3F5] overflow-x-hidden">
-      <header className="fixed top-6 left-6 md:w-auto md:right-auto right-6 z-40 border border-white/10 backdrop-blur-md bg-[#0B0C0F]/80 rounded-[16px]">
-        <div className="w-full mx-auto px-6">
-          <div className="flex items-center gap-6 md:h-14 h-14">
-            <button
-              onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
-              className="text-lg md:text-xl font-semibold font-mono hover:text-pink-400 transition-colors duration-300"
-            >
-              VERDANT
-            </button>
-
-            <nav className="hidden md:flex items-center gap-8">
-              <button
-                onClick={() => scrollToSection("metrics")}
-                className="text-sm text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors duration-300"
-              >
-                Результаты
-              </button>
-              <button
-                onClick={() => scrollToSection("map")}
-                className="text-sm text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors duration-300"
-              >
-                Проекты
-              </button>
-              <button
-                onClick={() => scrollToSection("narrative")}
-                className="text-sm text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors duration-300"
-              >
-                Технологии
-              </button>
-              <button
-                onClick={() => scrollToSection("faq")}
-                className="text-sm text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors duration-300"
-              >
-                Вопросы
-              </button>
-              <button
-                onClick={() => scrollToSection("cta")}
-                className="text-sm text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors duration-300"
-              >
-                Участвовать
-              </button>
-            </nav>
-
-            <button
-              onClick={() => setIsMenuOpen(!isMenuOpen)}
-              className="md:hidden ml-auto p-2 hover:bg-white/5 rounded-lg transition-colors duration-300"
-              aria-label="Toggle menu"
-            >
-              {isMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
-            </button>
+    <div className="h-screen w-screen flex flex-col bg-[#0B0C0F] text-[#F2F3F5] overflow-hidden">
+      {/* Header */}
+      <header className="flex-none flex items-center justify-between px-5 py-3 border-b border-white/8 bg-[#0f1117]/80 backdrop-blur-md z-30">
+        <div className="flex items-center gap-3">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-green-500 to-emerald-700 flex items-center justify-center text-base">
+            🌳
           </div>
+          <div>
+            <div className="text-sm font-semibold tracking-wide">Ведомость деревьев</div>
+            <div className="text-xs text-[#a7abb3]">Учёт и картирование</div>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <div className="hidden md:flex items-center gap-4 mr-3">
+            <div className="text-center">
+              <div className="text-lg font-bold text-green-400">{markers.length}</div>
+              <div className="text-xs text-[#a7abb3]">меток</div>
+            </div>
+            <div className="w-px h-8 bg-white/10" />
+            <div className="text-center">
+              <div className="text-lg font-bold text-emerald-400">{totalTrees}</div>
+              <div className="text-xs text-[#a7abb3]">деревьев</div>
+            </div>
+          </div>
+
+          <button
+            onClick={() => kmlInputRef.current?.click()}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-white/5 hover:bg-white/10 border border-white/10 transition-all"
+          >
+            <Icon name="Upload" size={14} />
+            <span className="hidden sm:inline">Импорт KML</span>
+          </button>
+
+          <button
+            onClick={handleKMLExport}
+            disabled={markers.length === 0}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-medium bg-green-600/20 hover:bg-green-600/35 border border-green-600/30 text-green-400 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <Icon name="Download" size={14} />
+            <span className="hidden sm:inline">Экспорт KML</span>
+          </button>
+
+          <input ref={kmlInputRef} type="file" accept=".kml" className="hidden" onChange={handleKMLImport} />
         </div>
       </header>
 
-      {isMenuOpen && (
-        <div className="fixed inset-0 bg-[#0B0C0F]/95 backdrop-blur-md z-50 flex flex-col items-start justify-end pb-20 pt-20 px-6">
-          <div className="flex flex-col gap-8 items-start text-left w-full">
-            <button
-              onClick={() => scrollToSection("metrics")}
-              className="font-serif text-5xl md:text-7xl font-light text-[#F2F3F5] hover:text-pink-400 transition-colors duration-300"
-            >
-              Результаты
-            </button>
-            <button
-              onClick={() => scrollToSection("map")}
-              className="font-serif text-5xl md:text-7xl font-light text-[#F2F3F5] hover:text-pink-400 transition-colors duration-300"
-            >
-              Проекты
-            </button>
-            <button
-              onClick={() => scrollToSection("narrative")}
-              className="font-serif text-5xl md:text-7xl font-light text-[#F2F3F5] hover:text-pink-400 transition-colors duration-300"
-            >
-              Технологии
-            </button>
-            <button
-              onClick={() => scrollToSection("faq")}
-              className="font-serif text-5xl md:text-7xl font-light text-[#F2F3F5] hover:text-pink-400 transition-colors duration-300"
-            >
-              Вопросы
-            </button>
-            <button
-              onClick={() => scrollToSection("cta")}
-              className="font-serif text-5xl md:text-7xl font-light text-[#F2F3F5] hover:text-pink-400 transition-colors duration-300"
-            >
-              Участвовать
-            </button>
-          </div>
-        </div>
-      )}
-
-      <section
-        ref={heroRef}
-        className={`relative min-h-screen flex flex-col items-center justify-center px-4 pt-24 pb-16 md:pt-32 md:pb-24 transition-all duration-[1200ms] ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden ${isLoaded ? "scale-100 opacity-100" : "scale-[1.03] opacity-0"}`}
-        style={{
-          backgroundImage: `url('/hero-landscape.png')`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          backgroundAttachment: "fixed",
-        }}
-      >
-        <div
-          className="absolute inset-0 pointer-events-none"
-          style={{
-            transform: `translateY(${scrollY * 0.5}px)`,
-            backgroundImage: `url('/hero-landscape.png')`,
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-          }}
-        />
-
-        <div className="absolute inset-0 bg-gradient-to-t from-[#0B0C0F] via-[#0B0C0F]/70 to-transparent pointer-events-none" />
-
-        <div
-          className="max-w-[1120px] w-full mx-auto relative z-10"
-          style={{
-            transform: `translateY(${scrollY * 0.2}px)`,
-          }}
-        >
-          <div className="text-center mb-8 md:mb-12">
-            <h1 className="font-serif text-[44px] leading-[1.1] md:text-[72px] md:leading-[1.05] font-medium mb-6 text-balance">
-              <span
-                className={`block stagger-reveal text-7xl font-light transition-all duration-500 md:text-8xl ${
-                  wordFade ? "opacity-100 blur-0" : "opacity-0 blur-lg"
-                }`}
-              >
-                Защитим <AnimatedText key={dynamicWordIndex} text={dynamicWords[dynamicWordIndex]} delay={0} />
-              </span>
-              <span className="block stagger-reveal text-7xl font-light md:text-8xl" style={{ animationDelay: "90ms" }}>
-                в масштабе
-              </span>
-            </h1>
-            <p
-              className="text-[#A7ABB3] text-base md:text-lg max-w-[520px] mx-auto mb-8 leading-relaxed stagger-reveal text-white"
-              style={{ animationDelay: "180ms" }}
-            >
-              Мониторинг лесов в реальном времени с помощью ИИ. Обнаружение угроз, отслеживание биоразнообразия, сохранение природы для будущих поколений.
-            </p>
-            <div className="stagger-reveal" style={{ animationDelay: "270ms" }}>
-              <Button className="glass-button px-8 py-6 text-base rounded-full bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all duration-300 text-white">
-                Начать защиту
-              </Button>
+      {/* Main layout */}
+      <div className="flex-1 flex overflow-hidden">
+        {/* Sidebar */}
+        <aside className="flex-none w-80 flex flex-col border-r border-white/8 bg-[#0d0e12] overflow-hidden">
+          {/* Search */}
+          <div className="p-3 border-b border-white/8">
+            <div className="relative">
+              <Icon name="Search" size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#a7abb3]" />
+              <input
+                className="w-full bg-white/5 border border-white/10 rounded-xl pl-8 pr-3 py-2 text-sm text-[#f2f3f5] placeholder-[#a7abb3] focus:outline-none focus:border-green-500/50 transition-all"
+                placeholder="Поиск по названию..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
             </div>
           </div>
 
-          <div className="mt-12 md:mt-20 stagger-reveal" style={{ animationDelay: "360ms" }} ref={dashboardRef}>
-            <div style={{ perspective: "1200px" }}>
-              <div
-                className="relative aspect-[16/10] md:aspect-[16/9] rounded-[24px] overflow-hidden"
-                style={{
-                  transform: `rotateX(${dashboardScrollOffset}deg)`,
-                  transformStyle: "preserve-3d",
-                  transition: "transform 0.05s linear",
-                }}
-              >
-                <img
-                  src="/dashboard-screenshot.png"
-                  alt="Панель мониторинга VERDANT"
-                  className="object-cover dashboard-image w-full h-auto"
-                />
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="relative py-12 border-y border-white/5 bg-[#0B0C0F] overflow-hidden md:py-8 md:pt-8 md:pb-4">
-        <div className="w-full">
-          <p className="text-center text-xs md:text-sm uppercase tracking-[0.2em] text-[#A7ABB3] mb-8">
-            Нам доверяют ведущие природоохранные организации
-          </p>
-          <div className="logo-marquee">
-            <div className="logo-marquee-content">
-              {[
-                "/logos/frame-11.png",
-                "/logos/frame-55.png",
-                "/logos/frame-4.png",
-                "/logos/frame-6.png",
-                "/logos/frame-8.png",
-                "/logos/frame-2.png",
-                "/logos/frame-3.png",
-                "/logos/frame-7.png",
-                "/logos/frame-11.png",
-                "/logos/frame-55.png",
-                "/logos/frame-4.png",
-                "/logos/frame-6.png",
-                "/logos/frame-8.png",
-                "/logos/frame-2.png",
-                "/logos/frame-3.png",
-                "/logos/frame-7.png",
-              ].map((logo, i) => (
-                <div key={i} className="px-8 md:px-12 flex items-center justify-center flex-shrink-0">
-                  <img
-                    src={logo || "/placeholder.svg"}
-                    alt={`Логотип партнера ${i + 1}`}
-                    className="h-32 md:h-24 w-auto object-contain opacity-60 hover:opacity-60 transition-all duration-300 brightness-0 invert"
-                  />
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section id="metrics" className="relative py-20 md:py-32 px-4 animate-on-scroll md:pt-24 md:pb-20">
-        <div className="max-w-[1120px] w-full mx-auto">
-          <h2 className="font-serif text-[32px] leading-[1.15] md:text-[48px] md:leading-[1.1] font-medium mb-6 md:mb-8 text-center text-balance">
-            Природоохранный{" "}
-            <span
-              className="inline-block"
-              style={{
-                background: "linear-gradient(135deg, #d9a7c7 0%, #fffcdc 100%)",
-                WebkitBackgroundClip: "text",
-                WebkitTextFillColor: "transparent",
-                backgroundClip: "text",
-              }}
-            >
-              результат
-            </span>{" "}
-            в масштабе
-          </h2>
-
-          <p className="text-[#A7ABB3] text-sm md:text-base mb-12 md:mb-16 text-center max-w-[600px] mx-auto leading-relaxed">
-            Нам доверяют природоохранные организации по всему миру. Работаем на технологиях, созданных для природы.
-          </p>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 md:gap-16 max-w-[800px] mx-auto">
-            {[
-              { label: "ЗАЩИЩЕНО ЛЕСОВ", value: "2.4M", desc: "гектаров по всему миру", color: "pink" },
-              { label: "ВИДОВ НА МОНИТОРИНГЕ", value: "12K+", desc: "диких животных", color: "purple" },
-              { label: "ПОГЛОЩЕНО УГЛЕРОДА", value: "18M", desc: "тонн CO2", color: "pink" },
-              { label: "ТОЧНОСТЬ ДЕТЕКЦИИ", value: "99.4%", desc: "обнаружения угроз", color: "purple" },
-            ].map((metric, i) => (
-              <div
-                key={i}
-                className="p-6 md:p-10 text-center border border-white/10 border-t-0 border-b border-l-0 border-r-0 md:py-10 md:pb-20"
-              >
-                <div
-                  className={`text-[10px] md:text-xs uppercase tracking-[0.15em] text-[#A7ABB3] mb-4 flex items-center justify-center gap-2`}
-                >
-                  <span
-                    className={`w-1.5 h-1.5 rounded-full ${metric.color === "pink" ? "bg-pink-400/60" : "bg-purple-400/60"}`}
-                  />
-                  {metric.label}
-                </div>
-                <div className="font-serif text-[48px] md:text-[72px] leading-none font-medium">
-                  <AnimatedCounter value={metric.value} />
-                </div>
-                <div className="text-[11px] md:text-xs text-[#A7ABB3] mt-3">{metric.desc}</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section id="map" className="relative py-20 md:py-32 animate-on-scroll bg-[#0B0C0F]">
-        <div className="text-center mb-12 md:mb-16 px-4">
-          <div className="text-[10px] md:text-xs uppercase tracking-[0.15em] text-[#A7ABB3] mb-6 flex items-center justify-center gap-2">
-            <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-pulse" />
-            ГЛОБАЛЬНЫЙ ОХВАТ
-          </div>
-          <h2 className="font-serif text-[32px] leading-[1.15] md:text-[48px] md:leading-[1.1] font-medium mb-6 text-balance">
-            Проекты по всему миру
-          </h2>
-          <p className="text-[#A7ABB3] text-sm md:text-base max-w-[600px] mx-auto leading-relaxed">
-            Мониторинг и защита критически важных лесных экосистем на пяти континентах
-          </p>
-        </div>
-
-        <WorldMap
-          experiences={experiences}
-          selectedExperience={selectedExperience}
-          onSelectExperience={setSelectedExperience}
-        />
-      </section>
-
-      <section id="narrative" className="relative py-20 md:py-32 px-4 animate-on-scroll">
-        <div className="max-w-[1120px] w-full mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-12 md:gap-16 items-stretch">
-            <div className="max-w-[720px]">
-              <div className="text-[10px] md:text-xs uppercase tracking-[0.15em] text-[#A7ABB3] mb-6 flex items-center gap-2">
-                <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-pulse" />
-                ТЕХНОЛОГИИ СОХРАНЕНИЯ
-              </div>
-              <h2 className="font-serif text-[36px] leading-[1.15] md:text-[56px] md:leading-[1.1] font-medium mb-8 text-balance">
-                Каждая экосистема{" "}
-                <span
-                  className="inline-block"
-                  style={{
-                    background: "linear-gradient(135deg, #d9a7c7 0%, #fffcdc 100%)",
-                    WebkitBackgroundClip: "text",
-                    WebkitTextFillColor: "transparent",
-                    backgroundClip: "text",
-                  }}
-                >
-                  важна
-                </span>
-              </h2>
-              <p className="text-[#A7ABB3] text-base md:text-lg leading-relaxed mb-12">
-                Наши спутниковые и ИИ-технологии отслеживают биоразнообразие, выявляют незаконные вырубки, анализируют паттерны обезлесения и оповещают команды в реальном времени. Сохранение со скоростью, которую требует природа.
-              </p>
-
-              <div className="md:hidden mb-8">
-                <div className="rounded-[24px] p-1 w-full aspect-square overflow-hidden">
-                  <img
-                    src={
-                      [
-                        "/drone.png",
-                        "/real-time-satellite.png",
-                        "/biodiversity-tracking.png",
-                        "/deforestation-detect.png",
-                      ][selectedFeature] || "/placeholder.svg"
-                    }
-                    alt="Превью функции"
-                    className={`w-full h-full object-cover rounded-[20px] transition-opacity duration-300 ${
-                      imageFade ? "opacity-100" : "opacity-0"
-                    }`}
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-6">
-                {[
-                  {
-                    title: "Дроны-разведчики",
-                    desc: "Аэросъемка для учета дикой природы и видового разнообразия",
-                    icon: CustomDroneIcon,
-                    image: "/drone.png",
-                  },
-                  {
-                    title: "Мониторинг 24/7",
-                    desc: "Круглосуточное спутниковое наблюдение с мгновенными оповещениями",
-                    icon: Satellite,
-                    image: "/real-time-satellite.png",
-                  },
-                  {
-                    title: "Учет биоразнообразия",
-                    desc: "Картирование и мониторинг популяций животных по регионам",
-                    icon: PawPrint,
-                    image: "/biodiversity-tracking.png",
-                  },
-                  {
-                    title: "Защита от вырубки",
-                    desc: "Обнаружение угроз до их эскалации",
-                    icon: Trees,
-                    image: "/deforestation-detect.png",
-                  },
-                ].map((feature, i) => (
+          {/* Panel content */}
+          <div className="flex-1 overflow-y-auto p-3">
+            {panelMode === "add" && (
+              <div className="animate-in fade-in slide-in-from-right-2 duration-200">
+                <div className="flex items-center gap-2 mb-4">
                   <button
-                    key={i}
-                    onClick={() => {
-                      setImageFade(false)
-                      setTimeout(() => {
-                        setSelectedFeature(i)
-                        setImageFade(true)
-                        setAutoRotationKey((prev) => prev + 1)
-                      }, 300)
-                    }}
-                    className={`relative w-full text-left flex gap-4 items-start p-5 transition-all duration-300 rounded-xs py-4 overflow-hidden ${
-                      selectedFeature === i ? "border border-white/20" : "border border-white/10"
-                    }`}
+                    onClick={() => { setPanelMode("list"); setPendingCoords(null) }}
+                    className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors"
                   >
-                    <feature.icon
-                      className={`w-6 h-6 flex-shrink-0 mt-1 transition-colors ${
-                        selectedFeature === i ? "text-green-400" : "text-green-500/60"
-                      }`}
-                    />
-                    <div className="flex-1">
-                      <h3 className="text-base md:text-lg font-medium mb-1">{feature.title}</h3>
-                      <p className="text-sm md:text-base text-[#A7ABB3]">{feature.desc}</p>
-                    </div>
-                    {selectedFeature === i && (
-                      <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-white/10">
-                        <div className="h-full bg-white progress-bar" />
-                      </div>
-                    )}
+                    <Icon name="ArrowLeft" size={14} />
                   </button>
-                ))}
-              </div>
-            </div>
-
-            <div className="hidden md:flex items-stretch justify-center">
-              <div className="relative w-full h-full min-h-[500px]">
-                {[
-                  {
-                    title: "Дроны-разведчики",
-                    image: "/drone.png",
-                  },
-                  {
-                    title: "Мониторинг 24/7",
-                    image: "/real-time-satellite.png",
-                  },
-                  {
-                    title: "Учет биоразнообразия",
-                    image: "/biodiversity-tracking.png",
-                  },
-                  {
-                    title: "Защита от вырубки",
-                    image: "/deforestation-detect.png",
-                  },
-                ].map((feature, i) => {
-                  const positionInStack = (i - selectedFeature + 4) % 4
-                  const isActive = positionInStack === 0
-
-                  return (
-                    <div
-                      key={i}
-                      className="absolute inset-0 p-1 transition-all duration-600 ease-out"
-                      style={{
-                        zIndex: 4 - positionInStack,
-                        transform: `translateX(${positionInStack * 16}px) scale(${1 - positionInStack * 0.02})`,
-                        opacity: isActive ? (imageFade ? 1 : 1) : 0.6 - positionInStack * 0.15,
-                      }}
-                    >
-                      <img
-                        src={feature.image || "/placeholder.svg"}
-                        alt={feature.title}
-                        className="w-full h-full object-cover rounded-[20px]"
-                      />
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section id="faq" className="relative py-20 md:py-32 px-4 animate-on-scroll">
-        <div className="max-w-[800px] w-full mx-auto">
-          <div className="text-center mb-12 md:mb-16">
-            <div className="text-[10px] md:text-xs uppercase tracking-[0.15em] text-[#A7ABB3] mb-6 flex items-center justify-center gap-2">
-              <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-pulse" />
-              ЧАСТЫЕ ВОПРОСЫ
-            </div>
-            <h2 className="font-serif text-[32px] leading-[1.15] md:text-[48px] md:leading-[1.1] font-medium mb-6 text-balance">
-              Есть{" "}
-              <span
-                className="inline-block"
-                style={{
-                  background: "linear-gradient(135deg, #d9a7c7 0%, #fffcdc 100%)",
-                  WebkitBackgroundClip: "text",
-                  WebkitTextFillColor: "transparent",
-                  backgroundClip: "text",
-                }}
-              >
-                вопросы
-              </span>
-              ?
-            </h2>
-            <p className="text-[#A7ABB3] text-sm md:text-base max-w-[600px] mx-auto leading-relaxed">
-              Все, что нужно знать о VERDANT и нашей платформе для экологического мониторинга.
-            </p>
-          </div>
-
-          <div className="space-y-4">
-            {[
-              {
-                question: "Как работает спутниковый мониторинг VERDANT?",
-                answer:
-                  "Наша платформа использует сеть спутников в сочетании с ИИ-алгоритмами для анализа лесного покрова в реальном времени. Мы обнаруживаем изменения площадью от 0,5 гектара в течение 24 часов, что позволяет оперативно реагировать на угрозы: незаконные вырубки или лесные пожары.",
-              },
-              {
-                question: "Какие регионы охватывает VERDANT?",
-                answer:
-                  "VERDANT сейчас ведет мониторинг более 2,4 миллиона гектаров на пяти континентах: тропические леса Амазонии, бассейн Конго, леса Борнео, сибирская тайга и тихоокеанский северо-запад Америки. Мы постоянно расширяем охват для защиты новых экосистем.",
-              },
-              {
-                question: "Насколько точна система обнаружения угроз?",
-                answer:
-                  "Наша система обнаружения угроз на базе ИИ достигает точности 99,4%. Мы используем модели машинного обучения, обученные на миллионах спутниковых снимков, чтобы отличать естественные изменения от антропогенного обезлесения или незаконной деятельности.",
-              },
-              {
-                question: "Можно ли интегрировать VERDANT с существующими системами?",
-                answer:
-                  "Да, VERDANT предоставляет полноценный API для интеграции с существующими системами управления природоохранной деятельностью, ГИС-платформами и системами оповещения. Наша документация содержит подробные руководства по внедрению.",
-              },
-              {
-                question: "Какова модель ценообразования VERDANT?",
-                answer:
-                  "Мы предлагаем многоуровневое ценообразование в зависимости от площади мониторинга и набора функций. Некоммерческие природоохранные организации могут претендовать на льготные тарифы или гранты. Свяжитесь с нами для расчета индивидуального предложения.",
-              },
-              {
-                question: "Как я могу помочь в сохранении лесов через VERDANT?",
-                answer:
-                  "Есть несколько способов: пожертвование на мониторинг незащищенных территорий, волонтерство в командах наземной верификации или корпоративное партнерство. Каждый вклад помогает защищать критически важные экосистемы.",
-              },
-            ].map((faq, i) => (
-              <div
-                key={i}
-                className="border border-white/10 rounded-xl overflow-hidden transition-all duration-300 hover:border-white/20"
-              >
-                <button
-                  onClick={() => setOpenFaqIndex(openFaqIndex === i ? null : i)}
-                  className="w-full flex items-center justify-between p-6 text-left"
-                >
-                  <span className="text-base md:text-lg font-medium pr-4">{faq.question}</span>
-                  <ChevronDown
-                    className={`w-5 h-5 flex-shrink-0 text-[#A7ABB3] transition-transform duration-300 ${
-                      openFaqIndex === i ? "rotate-180" : ""
-                    }`}
-                  />
-                </button>
-                <div
-                  className={`overflow-hidden transition-all duration-300 ease-in-out ${
-                    openFaqIndex === i ? "max-h-[500px] opacity-100" : "max-h-0 opacity-0"
-                  }`}
-                >
-                  <p className="px-6 pb-6 text-sm md:text-base text-[#A7ABB3] leading-relaxed">{faq.answer}</p>
+                  <h3 className="text-sm font-semibold">Новое дерево</h3>
                 </div>
+                {pendingCoords && (
+                  <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-xl bg-green-500/10 border border-green-500/20">
+                    <Icon name="MapPin" size={13} className="text-green-400" />
+                    <span className="text-xs text-green-400">
+                      {pendingCoords.lat.toFixed(5)}, {pendingCoords.lng.toFixed(5)}
+                    </span>
+                  </div>
+                )}
+                <TreeForm onSave={handleSaveNew} onCancel={() => { setPanelMode("list"); setPendingCoords(null) }} />
               </div>
-            ))}
-          </div>
-        </div>
-      </section>
+            )}
 
-      <section
-        id="cta"
-        className="relative py-24 md:py-40 px-4 animate-on-scroll overflow-hidden pt-0"
-        style={{
-          backgroundImage: `url('/earth-cta.png')`,
-          backgroundSize: "cover",
-          backgroundPosition: "center",
-          backgroundAttachment: "fixed",
-        }}
-      >
-        <div className="absolute inset-0 bg-gradient-to-b from-[#0B0C0F] via-[#0B0C0F]/60 to-transparent pointer-events-none" />
-        <div className="max-w-[800px] w-full mx-auto text-center relative z-10">
-          <div className="inline-flex items-center gap-2 glass-pill px-4 py-2 rounded-full mb-8 text-xs md:text-sm text-[#A7ABB3]">
-            <span className="w-1.5 h-1.5 rounded-full bg-pink-400 animate-pulse" />
-            Спасем планету
-          </div>
-
-          <h2 className="font-serif text-[40px] leading-[1.15] md:text-[64px] md:leading-[1.1] font-medium mb-6 text-balance">
-            Присоединяйтесь к глобальному движению
-          </h2>
-          <p className="text-[#A7ABB3] text-base md:text-lg mb-10 leading-relaxed max-w-[560px] mx-auto">
-            Вместе мы строим устойчивое будущее. Начните защищать леса уже сегодня.
-          </p>
-
-          <Button className="glass-button text-base rounded-full bg-white/5 border border-white/20 hover:bg-white/15 hover:border-white/30 transition-all duration-300 text-white px-8 py-6 md:text-base">
-            Начать сейчас
-          </Button>
-        </div>
-      </section>
-
-      <footer className="relative px-4 border-t border-white/5 py-8">
-        <div className="max-w-[1120px] w-full mx-auto">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-12 md:gap-8 mb-12">
-            {/* Brand Column */}
-            <div className="flex flex-col gap-4">
-              <div className="text-lg font-semibold font-mono">VERDANT</div>
-              <p className="text-xs text-[#A7ABB3] leading-relaxed">
-                Защита лесов по всему миру с помощью мониторинга в реальном времени и ИИ-технологий.
-              </p>
-              <div className="flex items-center gap-4 mt-2">
-                <a
-                  href="#"
-                  className="text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors"
-                  aria-label="X (Twitter)"
-                >
-                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
-                  </svg>
-                </a>
-                <a
-                  href="#"
-                  className="text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors"
-                  aria-label="YouTube"
-                >
-                  <Youtube className="w-4 h-4" />
-                </a>
-                <a
-                  href="#"
-                  className="text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors"
-                  aria-label="Instagram"
-                >
-                  <Instagram className="w-4 h-4" />
-                </a>
-              </div>
-            </div>
-
-            {/* Product Menu */}
-            <div className="flex flex-col gap-4">
-              <div className="text-xs uppercase tracking-[0.15em] text-[#F2F3F5] font-semibold mb-2">Продукт</div>
-              <div className="flex flex-col gap-3">
-                <a href="#" className="text-sm text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors">
-                  Возможности
-                </a>
-                <a href="#" className="text-sm text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors">
-                  Тарифы
-                </a>
-                <a href="#" className="text-sm text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors">
-                  Документация
-                </a>
-                <a href="#" className="text-sm text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors">
-                  API
-                </a>
-              </div>
-            </div>
-
-            {/* Company Menu */}
-            <div className="flex flex-col gap-4">
-              <div className="text-xs uppercase tracking-[0.15em] text-[#F2F3F5] font-semibold mb-2">Компания</div>
-              <div className="flex flex-col gap-3">
-                <a href="#" className="text-sm text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors">
-                  О нас
-                </a>
-                <a href="#" className="text-sm text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors">
-                  Блог
-                </a>
-                <a href="#" className="text-sm text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors">
-                  Карьера
-                </a>
-                <a href="#" className="text-sm text-[#A7ABB3] hover:text-[#F2F3F5] transition-colors">
-                  Контакты
-                </a>
-              </div>
-            </div>
-
-            {/* Newsletter Subscription */}
-            <div className="flex flex-col gap-4">
-              <div className="text-xs uppercase tracking-[0.15em] text-[#F2F3F5] font-semibold mb-2">Рассылка</div>
-              <p className="text-xs text-[#A7ABB3] mb-3">Получайте новости об экологических инициативах.</p>
-              <div className="flex flex-col gap-2">
-                <input
-                  type="email"
-                  placeholder="Введите email"
-                  className="px-4 py-2 bg-white/5 border border-white/10 rounded-lg text-xs text-[#F2F3F5] placeholder-[#A7ABB3] focus:outline-none focus:border-pink-400/50 focus:ring-1 focus:ring-pink-400/20 transition-all"
+            {panelMode === "edit" && selectedMarker && (
+              <div className="animate-in fade-in slide-in-from-right-2 duration-200">
+                <div className="flex items-center gap-2 mb-4">
+                  <button
+                    onClick={() => { setPanelMode("view") }}
+                    className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors"
+                  >
+                    <Icon name="ArrowLeft" size={14} />
+                  </button>
+                  <h3 className="text-sm font-semibold">Редактировать</h3>
+                </div>
+                <TreeForm
+                  initial={selectedMarker}
+                  onSave={handleSaveEdit}
+                  onCancel={() => setPanelMode("view")}
+                  onDelete={handleDelete}
                 />
-                <button className="px-4 py-2 border rounded-lg text-xs font-medium hover:bg-pink-500/30 hover:border-pink-500/50 transition-all bg-green-800 border-green-700 text-white">
-                  Подписаться
-                </button>
+              </div>
+            )}
+
+            {panelMode === "view" && selectedMarker && (
+              <div className="animate-in fade-in slide-in-from-right-2 duration-200">
+                <div className="flex items-center justify-between mb-4">
+                  <button
+                    onClick={() => { setPanelMode("list"); setSelectedMarker(null) }}
+                    className="w-7 h-7 rounded-lg bg-white/5 hover:bg-white/10 flex items-center justify-center transition-colors"
+                  >
+                    <Icon name="ArrowLeft" size={14} />
+                  </button>
+                  <button
+                    onClick={() => setPanelMode("edit")}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-medium transition-colors border border-white/10"
+                  >
+                    <Icon name="Pencil" size={12} />
+                    Изменить
+                  </button>
+                </div>
+
+                {selectedMarker.photo && (
+                  <div className="rounded-xl overflow-hidden mb-3 border border-white/10">
+                    <img src={selectedMarker.photo} alt={selectedMarker.name} className="w-full h-40 object-cover" />
+                  </div>
+                )}
+
+                <div className="mb-3">
+                  <div className="flex items-center gap-2 mb-1">
+                    <span className="text-xl">🌳</span>
+                    <h2 className="text-base font-semibold">{selectedMarker.name}</h2>
+                  </div>
+                  {selectedMarker.species && (
+                    <p className="text-xs text-[#a7abb3] italic pl-8">{selectedMarker.species}</p>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 mb-3">
+                  {[
+                    { label: "Диаметр", value: `${selectedMarker.diameter} см`, icon: "Circle" },
+                    { label: "Высота", value: `${selectedMarker.height} м`, icon: "ArrowUp" },
+                    { label: "Кол-во", value: String(selectedMarker.count), icon: "Trees" },
+                  ].map((stat) => (
+                    <div key={stat.label} className="bg-white/5 rounded-xl p-2.5 text-center border border-white/8">
+                      <div className="text-base font-bold text-green-400">{stat.value}</div>
+                      <div className="text-xs text-[#a7abb3] mt-0.5">{stat.label}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-1.5 px-3 py-2 rounded-xl bg-white/5 border border-white/8 mb-3">
+                  <Icon name="MapPin" size={12} className="text-[#a7abb3] flex-none" />
+                  <span className="text-xs text-[#a7abb3]">
+                    {selectedMarker.lat.toFixed(5)}, {selectedMarker.lng.toFixed(5)}
+                  </span>
+                </div>
+
+                {selectedMarker.note && (
+                  <div className="px-3 py-2.5 rounded-xl bg-white/5 border border-white/8">
+                    <div className="text-xs text-[#a7abb3] mb-1">Примечание</div>
+                    <div className="text-sm">{selectedMarker.note}</div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {panelMode === "list" && (
+              <>
+                {filteredMarkers.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-48 text-center gap-3">
+                    <div className="text-4xl opacity-30">🌳</div>
+                    <div className="text-sm text-[#a7abb3]">
+                      {markers.length === 0
+                        ? "Нажмите «Добавить дерево» на карте"
+                        : "Ничего не найдено"}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {filteredMarkers.map((m) => (
+                      <button
+                        key={m.id}
+                        onClick={() => handleSelectMarker(m)}
+                        className={`w-full text-left p-3 rounded-xl border transition-all duration-150 group ${
+                          selectedMarker?.id === m.id
+                            ? "bg-green-500/10 border-green-500/30"
+                            : "bg-white/3 border-white/8 hover:bg-white/6 hover:border-white/15"
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-base flex-none">🌳</span>
+                            <div className="min-w-0">
+                              <div className="text-sm font-medium truncate">{m.name}</div>
+                              {m.species && (
+                                <div className="text-xs text-[#a7abb3] italic truncate">{m.species}</div>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex-none text-right">
+                            <div className="text-xs text-green-400 font-medium">{m.count} шт.</div>
+                            <div className="text-xs text-[#a7abb3]">⌀{m.diameter}см</div>
+                          </div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Stats footer */}
+          <div className="flex-none p-3 border-t border-white/8 md:hidden">
+            <div className="flex justify-around">
+              <div className="text-center">
+                <div className="text-lg font-bold text-green-400">{markers.length}</div>
+                <div className="text-xs text-[#a7abb3]">меток</div>
+              </div>
+              <div className="w-px bg-white/10" />
+              <div className="text-center">
+                <div className="text-lg font-bold text-emerald-400">{totalTrees}</div>
+                <div className="text-xs text-[#a7abb3]">деревьев</div>
               </div>
             </div>
           </div>
+        </aside>
 
-          {/* Footer Bottom */}
-          <div className="border-t border-white/5 pt-8 flex flex-col md:flex-row justify-between items-center gap-4 text-xs text-[#A7ABB3]">
-            <div>2025 VERDANT. Все права защищены.</div>
-            <div className="flex gap-6">
-              <a href="#" className="hover:text-[#F2F3F5] transition-colors">
-                Политика конфиденциальности
-              </a>
-              <a href="#" className="hover:text-[#F2F3F5] transition-colors">
-                Условия использования
-              </a>
-              <a href="#" className="hover:text-[#F2F3F5] transition-colors">
-                Настройки cookie
-              </a>
-            </div>
-          </div>
-        </div>
-      </footer>
+        {/* Map */}
+        <main className="flex-1 relative">
+          <TreeMap
+            markers={markers}
+            onAddMarker={handleAddMarker}
+            onSelectMarker={handleSelectMarker}
+            selectedId={selectedMarker?.id}
+          />
+        </main>
+      </div>
     </div>
   )
 }
